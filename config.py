@@ -14,5 +14,4 @@ DEFAULT_CATEGORY = "其他"
 
 def ensure_directories():
     for dir_path in [DATA_DIR, COMPOSITION_DIR, EXPORT_DIR, PROMPTS_DIR]:
-        if not os.path.exists(dir_path):
-            os.makedirs(dir_path)
+        os.makedirs(dir_path, exist_ok=True)

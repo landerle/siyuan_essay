@@ -30,7 +30,7 @@ def archive_file_to_composition_dir(source_path, target_filename=None):
     return dest_path
 
 
-def import_single_file(file_path, archive=True, skip_check=False, original_filename=None):
+def import_single_file(file_path, archive=True, skip_check=False, original_filename=None, category=None, score=0):
     if not os.path.exists(file_path):
         return False, "文件不存在", None
     
@@ -53,15 +53,19 @@ def import_single_file(file_path, archive=True, skip_check=False, original_filen
     title = extract_title(content, file_name)
     analysis = analyze_composition(content)
     
+    # 如果传入了 category，使用自定义分类，否则用自动分析结果
+    final_category = category if category else analysis["category"]
+    
     composition_data = {
         "title": title,
         "file_name": file_name,
         "file_path": final_path,
         "content": content,
-        "category": analysis["category"],
+        "category": final_category,
         "tags": analysis["tags"],
         "word_count": analysis["word_count"],
-        "summary": analysis["summary"]
+        "summary": analysis["summary"],
+        "score": score
     }
     
     add_composition(composition_data)

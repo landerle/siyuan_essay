@@ -16,6 +16,8 @@ get_all_tags = db_module.get_all_tags
 get_composition_by_id = db_module.get_composition_by_id
 delete_composition = db_module.delete_composition
 update_composition = db_module.update_composition
+update_composition_category = db_module.update_composition_category
+update_composition_score = db_module.update_composition_score
 add_favorite_sentence = db_module.add_favorite_sentence
 get_favorite_sentences = db_module.get_favorite_sentences
 get_favorite_sentences_by_composition_id = db_module.get_favorite_sentences_by_composition_id
@@ -95,6 +97,13 @@ with tab1:
     st.divider()
     st.subheader("导入作文")
     
+    # 所有已有的分类（含自动分类中的固定分类）
+    ALL_PRESET_CATEGORIES = [
+        "成长感悟类", "亲情类", "友情类", "校园生活类",
+        "写人记事类", "自然风景类", "传统文化类",
+        "读后感类", "议论文类", "想象作文类", "其他"
+    ]
+    
     col1, col2 = st.columns([1, 1])
     with col1:
         st.write("📤 从本地选择文件导入（自动归档）")
@@ -103,41 +112,118 @@ with tab1:
             type=['txt', 'docx'],
             accept_multiple_files=True
         )
+        
         if uploaded_files:
-            if st.button("📥 导入选中的文件", type="primary"):
-                imported = 0
-                failed = []
-                for uploaded_file in uploaded_files:
-                    # 保存到临时文件
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
-                        tmp_file.write(uploaded_file.getvalue())
-                        tmp_file_path = tmp_file.name
-                    
-                    # 导入并归档，传递原始文件名
-                    success, reason, archived_path = import_single_file(
-                        tmp_file_path, 
-                        archive=True, 
-                        original_filename=uploaded_file.name
-                    )
-                    
-                    # 删除临时文件
+            # 存入 session_state 以便配置
+            if "pending_uploads" not in st.session_state:
+                st.session_state.pending_uploads = []
+            
+            # 将新上传的文件加入暂存区（去重）
+            existing_names = {p["name"] for p in st.session_state.pending_uploads}
+            for f in uploaded_files:
+                if f.name not in existing_names:
+                    # 读取内容做预览
                     try:
-                        os.unlink(tmp_file_path)
+                        raw = f.read()
+                        preview = raw.decode("utf-8")[:200]
                     except:
-                        pass
+                        preview = "(无法预览)"
+                    st.session_state.pending_uploads.append({
+                        "name": f.name,
+                        "raw": raw,
+                        "preview": preview,
+                        "category": "",
+                        "score": 0
+                    })
+                    existing_names.add(f.name)
+        
+        # 显示待配置的导入列表
+        if st.session_state.get("pending_uploads"):
+            st.write("---")
+            st.markdown("**以下文件等待导入，请设置分类和评分：**")
+            
+            all_existing_categories = set(get_categories()) | set(ALL_PRESET_CATEGORIES)
+            
+            all_ready = True
+            for idx, pending in enumerate(st.session_state.pending_uploads):
+                with st.expander(f"📄 {pending['name']}", expanded=True):
+                    st.caption(f"预览: {pending['preview']}")
                     
-                    if success:
-                        imported += 1
-                    else:
-                        failed.append(f"{uploaded_file.name}: {reason}")
-                
-                if imported > 0:
-                    st.success(f"成功导入 {imported} 篇作文！")
-                if failed:
-                    st.warning("部分文件导入失败：")
-                    for fail in failed:
-                        st.write(f"- {fail}")
-                st.rerun()
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        # 分类：下拉框 + 自定义输入
+                        cat_options = sorted(all_existing_categories)
+                        selected_cat = st.selectbox(
+                            "分类",
+                            [""] + cat_options + ["✏️ 自定义..."],
+                            key=f"cat_select_{idx}"
+                        )
+                        if selected_cat == "✏️ 自定义...":
+                            custom_cat = st.text_input("请输入自定义分类", key=f"cat_custom_{idx}")
+                            final_cat = custom_cat.strip()
+                        else:
+                            final_cat = selected_cat
+                        
+                        st.session_state.pending_uploads[idx]["category"] = final_cat
+                    
+                    with c2:
+                        # 评分：1-5 星
+                        score = st.select_slider(
+                            "评分",
+                            options=[0, 1, 2, 3, 4, 5],
+                            value=st.session_state.pending_uploads[idx]["score"],
+                            format_func=lambda x: "未评分" if x == 0 else "⭐" * x,
+                            key=f"score_slider_{idx}"
+                        )
+                        st.session_state.pending_uploads[idx]["score"] = score
+                    
+                    if not final_cat:
+                        all_ready = False
+            
+            col_a, col_b = st.columns(2)
+            with col_a:
+                if st.button("✅ 确认导入", type="primary", disabled=not all_ready):
+                    imported = 0
+                    failed = []
+                    for pending in st.session_state.pending_uploads:
+                        # 写入临时文件
+                        ext = os.path.splitext(pending["name"])[1]
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+                            tmp.write(pending["raw"])
+                            tmp_path = tmp.name
+                        
+                        cat = pending["category"] if pending["category"] else None
+                        score_val = pending["score"] if pending["score"] else 0
+                        success, reason, _ = import_single_file(
+                            tmp_path, archive=True,
+                            original_filename=pending["name"],
+                            category=cat,
+                            score=score_val
+                        )
+                        try:
+                            os.unlink(tmp_path)
+                        except:
+                            pass
+                        
+                        if success:
+                            imported += 1
+                        else:
+                            failed.append(f"{pending['name']}: {reason}")
+                    
+                    st.session_state.pending_uploads = []
+                    
+                    if imported > 0:
+                        st.success(f"成功导入 {imported} 篇作文！")
+                    if failed:
+                        st.warning("部分文件导入失败：")
+                        for fail in failed:
+                            st.write(f"- {fail}")
+                    st.rerun()
+            
+            with col_b:
+                if st.button("🗑️ 清空待导入列表"):
+                    st.session_state.pending_uploads = []
+                    st.rerun()
     
     with col2:
         st.write(f"📂 扫描作文目录（当前目录：{COMPOSITION_DIR}）")
@@ -210,10 +296,12 @@ with tab2:
         
         df_data = []
         for comp in compositions:
+            score_display = "⭐" * comp.get("score", 0) if comp.get("score", 0) > 0 else ""
             df_data.append({
                 "ID": comp['id'],
                 "标题": comp['title'],
                 "分类": comp['category'],
+                "评分": score_display,
                 "标签": ", ".join(comp['tags']),
                 "字数": comp['word_count'],
                 "导入时间": comp['created_at'][:10]
@@ -223,7 +311,8 @@ with tab2:
         
         st.subheader("作文卡片")
         for comp in compositions:
-            with st.expander(f"📄 {comp['title']} ({comp['category']})"):
+            score_display = "⭐" * comp.get("score", 0) if comp.get("score", 0) > 0 else "未评分"
+            with st.expander(f"📄 {comp['title']} ({comp['category']}) {score_display}"):
                 col1, col2 = st.columns([3, 1])
                 with col1:
                     st.write(f"**标签**：{', '.join(comp['tags'])}")
@@ -242,7 +331,6 @@ with tab2:
                         if st.button("✅ 确认删除", key=f"confirm_{comp['id']}"):
                             success, file_path = delete_composition(comp['id'])
                             if success:
-                                # 删除文件
                                 if file_path and os.path.exists(file_path):
                                     try:
                                         os.remove(file_path)
@@ -255,6 +343,48 @@ with tab2:
                         if st.button("❌ 取消", key=f"cancel_{comp['id']}"):
                             st.session_state.pop(f"confirm_delete_{comp['id']}", None)
                             st.rerun()
+                
+                # 修改分类 & 评分
+                st.divider()
+                st.markdown("**修改分类与评分：**")
+                edit_c1, edit_c2, edit_c3 = st.columns([2, 2, 1])
+                
+                all_existing_categories = set(get_categories()) | set([
+                    "成长感悟类", "亲情类", "友情类", "校园生活类",
+                    "写人记事类", "自然风景类", "传统文化类",
+                    "读后感类", "议论文类", "想象作文类", "其他"
+                ])
+                
+                with edit_c1:
+                    cat_options = sorted(all_existing_categories)
+                    current_cat = comp['category'] or ""
+                    new_cat = st.selectbox(
+                        "分类",
+                        [""] + cat_options + ["✏️ 自定义..."],
+                        index=(cat_options.index(current_cat) + 1) if current_cat in cat_options else 0,
+                        key=f"list_cat_{comp['id']}"
+                    )
+                    if new_cat == "✏️ 自定义...":
+                        new_cat = st.text_input("输入自定义分类", value=current_cat, key=f"list_cat_custom_{comp['id']}")
+                
+                with edit_c2:
+                    new_score = st.select_slider(
+                        "评分",
+                        options=[0, 1, 2, 3, 4, 5],
+                        value=comp.get("score", 0),
+                        format_func=lambda x: "未评分" if x == 0 else "⭐" * x,
+                        key=f"list_score_{comp['id']}"
+                    )
+                
+                with edit_c3:
+                    st.write("")
+                    st.write("")
+                    if st.button("💾 保存", key=f"list_save_{comp['id']}"):
+                        if new_cat and new_cat != "✏️ 自定义...":
+                            update_composition_category(comp['id'], new_cat)
+                        update_composition_score(comp['id'], new_score)
+                        st.success("✅ 保存成功！")
+                        st.rerun()
     else:
         st.info("没有找到符合条件的作文")
 
@@ -284,6 +414,18 @@ with tab3:
                     new_title = st.text_input("标题", value=comp['title'])
                     new_content = st.text_area("作文正文", value=comp['content'], height=400)
                     
+                    col_edit1, col_edit2 = st.columns(2)
+                    with col_edit1:
+                        new_category = st.text_input("分类", value=comp['category'])
+                    with col_edit2:
+                        new_score = st.select_slider(
+                            "评分",
+                            options=[0, 1, 2, 3, 4, 5],
+                            value=comp.get("score", 0),
+                            format_func=lambda x: "未评分" if x == 0 else "⭐" * x,
+                            key=f"detail_edit_score_{comp['id']}"
+                        )
+                    
                     col1, col2 = st.columns([1, 1])
                     with col1:
                         if st.button("💾 保存修改", type="primary"):
@@ -295,10 +437,11 @@ with tab3:
                             update_data = {
                                 'title': new_title,
                                 'content': new_content,
-                                'category': comp['category'],  # 保持原分类
-                                'tags': comp['tags'],          # 保持原标签
+                                'category': new_category,
+                                'tags': comp['tags'],
                                 'word_count': word_count,
-                                'summary': analysis['summary']
+                                'summary': analysis['summary'],
+                                'score': new_score
                             }
                             
                             update_composition(comp['id'], update_data)
@@ -321,12 +464,15 @@ with tab3:
                 else:
                     # 查看模式
                     st.subheader(comp['title'])
-                    col1, col2, col3 = st.columns(3)
+                    col1, col2, col3, col4 = st.columns(4)
                     with col1:
                         st.write(f"**分类**：{comp['category']}")
                     with col2:
                         st.write(f"**字数**：{comp['word_count']}")
                     with col3:
+                        score_display = "⭐" * comp.get("score", 0) if comp.get("score", 0) > 0 else "未评分"
+                        st.write(f"**评分**：{score_display}")
+                    with col4:
                         st.write(f"**导入时间**：{comp['created_at'][:10]}")
                     
                     st.write(f"**标签**：{', '.join(comp['tags'])}")
@@ -380,14 +526,10 @@ with tab3:
                                 st.markdown("### ✨ 作文优点")
                                 for s in data['strengths']:
                                     st.markdown(f"- {s}")
-                            if 'weaknesses' in data:
-                                st.markdown("### 💭 可以改进的地方")
-                                for w in data['weaknesses']:
+                            if 'improvements' in data:
+                                st.markdown("### 💭 改进建议")
+                                for w in data['improvements']:
                                     st.markdown(f"- {w}")
-                            if 'suggestions' in data:
-                                st.markdown("### 💡 改进建议")
-                                for s in data['suggestions']:
-                                    st.markdown(f"- {s}")
                             if 'highlight_sentences' in data:
                                 st.markdown("### 🌟 优秀句子（可收藏）")
                                 for idx, h in enumerate(data['highlight_sentences']):
@@ -458,7 +600,47 @@ with tab3:
                                         result = llm_module.ai_analyze_composition(comp['content'])
                                         st.session_state[ai_result_key] = result
                                     if result.get('success'):
-                                        st.success("分析完成！")
+                                        # 将分析结果格式化为文本
+                                        analysis_text = llm_module.format_analysis_result(result.get('data', {}))
+                                        
+                                        # 如果已有分析内容，替换旧分析；否则追加
+                                        if llm_module.has_analysis(comp['content']):
+                                            # 找到旧分析的起始和结束位置
+                                            marker = llm_module.ANALYSIS_MARKER_START.strip()
+                                            marker_end = llm_module.ANALYSIS_MARKER_END.strip()
+                                            start_idx = comp['content'].find(marker)
+                                            end_idx = comp['content'].rfind(marker_end)
+                                            if start_idx != -1 and end_idx != -1:
+                                                end_idx += len(marker_end)
+                                                base_content = comp['content'][:start_idx].rstrip()
+                                            else:
+                                                base_content = comp['content']
+                                        else:
+                                            base_content = comp['content']
+                                        
+                                        new_content = base_content + "\n\n" + analysis_text
+                                        
+                                        # 更新数据库中的内容
+                                        update_data = {
+                                            'title': comp['title'],
+                                            'content': new_content,
+                                            'category': comp['category'],
+                                            'tags': comp['tags'],
+                                            'word_count': comp['word_count'],
+                                            'summary': comp['summary'],
+                                            'score': comp.get('score', 0)
+                                        }
+                                        update_composition(comp['id'], update_data)
+                                        
+                                        # 同时更新本地文件
+                                        if comp['file_path'] and os.path.exists(comp['file_path']):
+                                            try:
+                                                with open(comp['file_path'], 'w', encoding='utf-8') as f:
+                                                    f.write(new_content)
+                                            except Exception as e:
+                                                st.warning(f"文件更新失败：{e}")
+                                        
+                                        st.success("✅ 分析完成！点评已附在作文末尾。")
                                     else:
                                         st.error(f"分析失败：{result.get('reason')}")
                                     st.rerun()

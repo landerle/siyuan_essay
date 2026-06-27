@@ -23,10 +23,17 @@ def init_db():
             tags TEXT,
             word_count INTEGER,
             summary TEXT,
+            score INTEGER DEFAULT 0,
             created_at TEXT,
             updated_at TEXT
         )
     ''')
+    
+    # 兼容旧表：如果 score 列不存在则添加
+    try:
+        cursor.execute('ALTER TABLE compositions ADD COLUMN score INTEGER DEFAULT 0')
+    except sqlite3.OperationalError:
+        pass  # 列已存在
     
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS highlights (
@@ -82,8 +89,8 @@ def add_composition(data):
     
     cursor.execute('''
         INSERT OR REPLACE INTO compositions 
-        (title, file_name, file_path, content, category, tags, word_count, summary, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (title, file_name, file_path, content, category, tags, word_count, summary, score, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         data['title'],
         data['file_name'],
@@ -93,6 +100,7 @@ def add_composition(data):
         tags_json,
         data['word_count'],
         data['summary'],
+        data.get('score', 0),
         now,
         now
     ))
@@ -112,7 +120,7 @@ def update_composition(composition_id, data):
     
     cursor.execute('''
         UPDATE compositions 
-        SET title=?, content=?, category=?, tags=?, word_count=?, summary=?, updated_at=?
+        SET title=?, content=?, category=?, tags=?, word_count=?, summary=?, score=?, updated_at=?
         WHERE id=?
     ''', (
         data.get('title'),
@@ -121,10 +129,33 @@ def update_composition(composition_id, data):
         tags_json,
         data.get('word_count'),
         data.get('summary'),
+        data.get('score', 0),
         now,
         composition_id
     ))
     
+    conn.commit()
+    conn.close()
+    return True
+
+
+def update_composition_category(composition_id, category):
+    """仅更新作文分类"""
+    conn = sqlite3.connect(DATABASE_PATH)
+    cursor = conn.cursor()
+    now = datetime.now().isoformat()
+    cursor.execute('UPDATE compositions SET category=?, updated_at=? WHERE id=?', (category, now, composition_id))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def update_composition_score(composition_id, score):
+    """仅更新作文评分"""
+    conn = sqlite3.connect(DATABASE_PATH)
+    cursor = conn.cursor()
+    now = datetime.now().isoformat()
+    cursor.execute('UPDATE compositions SET score=?, updated_at=? WHERE id=?', (score, now, composition_id))
     conn.commit()
     conn.close()
     return True
