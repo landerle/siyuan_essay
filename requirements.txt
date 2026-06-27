@@ -1,0 +1,4 @@
+streamlit
+python-docx
+pandas
+# openai  # 可选：如需 AI 分析功能，取消注释并运行 pip install openai
