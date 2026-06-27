@@ -1,0 +1,6 @@
+{
+    "api_key": "在此填入你的 API Key",
+    "base_url": "https://api.deepseek.com/v1",
+    "model": "deepseek-chat",
+    "comment": "支持的服务商：DeepSeek, OpenAI, 智谱AI, 通义千问等"
+}
